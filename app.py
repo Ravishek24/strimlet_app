@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import json
+import secrets
 from components.data_processing import process_bank_data
 from components.broker import broker_data_process
 from components.pdf_processing import process_pdf_bank_data 
@@ -11,43 +12,34 @@ UPLOAD_DIR = './uploads'
 AUTH_FILE = '.streamlit/auth.json'
 
 def force_login_check():
-    """Force login check before any other operation"""
-    # Initialize basic session state if it doesn't exist
-    if 'authentication_status' not in st.session_state:
-        st.session_state.authentication_status = False
-    
-    # Always verify auth file exists and is valid
-    if not verify_auth_file():
-        st.session_state.authentication_status = False
-        return False
-    return bool(st.session_state.get('authentication_status'))
+    """Force login check before any operation"""
+    if os.path.exists(AUTH_FILE) and verify_auth_file():
+        # If valid, rehydrate session state
+        load_auth_status()
+        return True
+    # If auth file is missing or invalid, reset authentication state
+    st.session_state.authentication_status = False
+    return False
+
 
 def verify_auth_file():
     """Verify if auth file exists and is valid"""
     try:
         if not os.path.exists(AUTH_FILE):
             return False
-        
+
         with open(AUTH_FILE, 'r') as f:
             auth_data = json.load(f)
-            
-        # Verify session timestamp
+
+        # Check session validity
         if 'session_start_time' in auth_data:
             session_start_time = datetime.strptime(auth_data['session_start_time'], "%Y-%m-%d %H:%M:%S.%f")
-            if datetime.now() - session_start_time > timedelta(minutes=30):
+            if datetime.now() - session_start_time > timedelta(hours=8):
                 os.remove(AUTH_FILE)
                 return False
-                
-        # Verify all required fields exist
+
         required_fields = ['username', 'authentication_status', 'session_id']
-        if not all(field in auth_data for field in required_fields):
-            return False
-            
-        # Verify session ID matches if it exists in session state
-        if 'session_id' in st.session_state and st.session_state.session_id != auth_data['session_id']:
-            return False
-            
-        return True
+        return all(field in auth_data for field in required_fields)
     except Exception as e:
         print(f"Auth verification error: {e}")
         return False
@@ -55,9 +47,17 @@ def verify_auth_file():
 
 def init_session_state():
     """Initialize session state variables"""
-    if not force_login_check():
+    if 'authentication_status' not in st.session_state:
+        st.session_state.authentication_status = False
+
+    # Rehydrate session state from AUTH_FILE if valid
+    if verify_auth_file():
+        load_auth_status()
+    else:
+        # Clear session state if the auth file is invalid
         clear_session_state()
-        
+
+    # Initialize other state variables if not present
     state_defaults = {
         'authentication_status': False,
         'username': None,
@@ -67,27 +67,36 @@ def init_session_state():
         'processed_broker_data': pd.DataFrame(),
         'combined_df': pd.DataFrame(),
         'session_start_time': datetime.now(),
-        'session_id': None
+        'session_id': generate_session_id() if 'session_id' not in st.session_state else st.session_state.session_id,
     }
+
+    for key, default in state_defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default
     
     for key, default in state_defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default
+    
+    # Load authentication status from file if possible
+    load_auth_status()
 
 def authenticate(username, password):
     """Authenticate user"""
     if username == "ravi" and password == "12345":
         st.session_state.authentication_status = True
         st.session_state.username = username
-        st.session_state.session_id = str(datetime.now().timestamp())
+        # Generate a secure, persistent session ID
+        st.session_state.session_id = generate_session_id()
         st.session_state.session_start_time = datetime.now()
         save_auth_status()
         return True
     return False
 
 def generate_session_id():
-    """Generate a unique session ID"""
-    return datetime.now().strftime("%Y%m%d%H%M%S") + str(hash(str(datetime.now())))
+    """Generate a unique and secure session ID"""
+    # Use secrets.token_hex for a more secure, persistent session ID
+    return secrets.token_hex(16)
 
 def save_auth_status():
     """Save authentication status to file"""
@@ -99,31 +108,35 @@ def save_auth_status():
         'session_start_time': str(st.session_state.session_start_time),
         'session_id': st.session_state.session_id
     }
-    
     with open(AUTH_FILE, 'w') as f:
         json.dump(auth_data, f)
 
 def load_auth_status():
     """Load authentication status from file"""
-    if not verify_auth_file():
-        clear_session_state()
-        return
-        
     try:
+        if not os.path.exists(AUTH_FILE):
+            # Auth file doesn't exist, initialize default state
+            st.session_state.authentication_status = False
+            st.session_state.username = None
+            return
+
         with open(AUTH_FILE, 'r') as f:
             auth_data = json.load(f)
-            
-        st.session_state.update({
-            'authentication_status': auth_data.get('authentication_status', False),
-            'username': auth_data.get('username'),
-            'file_data': auth_data.get('file_data', []),
-            'session_id': auth_data.get('session_id'),
-            'session_start_time': datetime.strptime(auth_data['session_start_time'], "%Y-%m-%d %H:%M:%S.%f")
-        })
+
+        # Update session state with loaded data
+        st.session_state.authentication_status = auth_data.get('authentication_status', False)
+        st.session_state.username = auth_data.get('username')
+        st.session_state.file_data = auth_data.get('file_data', [])
+        st.session_state.session_id = auth_data.get('session_id')
+        st.session_state.session_start_time = datetime.strptime(
+            auth_data['session_start_time'], 
+            "%Y-%m-%d %H:%M:%S.%f"
+        )
     except Exception as e:
         print(f"Error loading auth status: {e}")
-        clear_session_state()
-
+        # Reset session state on error
+        st.session_state.authentication_status = False
+        st.session_state.username = None
 
 
 def clear_session_state():
@@ -171,17 +184,24 @@ def login():
 def main():
     st.set_page_config(page_title="File Upload and Analysis System")
     
-    # Always initialize session state first
+    # Initialize session state
     init_session_state()
     
-    # Force login check at the start
-    if not force_login_check():
+    # Check authentication
+    if not st.session_state.get('authentication_status', False):
         login()
         return
-        
-    # If we get here, user is authenticated
+    
+    # Rest of your main application logic
     st.title("File Upload and Analysis System")
-    show_sidebar()
+    
+    # Add logout to sidebar
+    with st.sidebar:
+        st.write(f"Welcome {st.session_state.username}!")
+        if st.button("Logout"):
+            logout()
+    
+    # Your existing file upload and processing logic goes here
     upload_and_process_files()
 
 def show_sidebar():
