@@ -11,6 +11,27 @@ from datetime import datetime, timedelta
 UPLOAD_DIR = './uploads'
 AUTH_FILE = '.streamlit/auth.json'
 
+def clean_and_trim_policy_number(policy):
+    """
+    Clean and trim policy numbers by:
+    1. Removing extra trailing digits beyond 9 digits.
+    2. Zero-padding to ensure consistent 9-digit format.
+    3. Removing non-numeric characters.
+    """
+    if pd.isna(policy):
+        return None
+
+    # Convert to string and remove non-numeric characters
+    policy_str = ''.join(filter(str.isdigit, str(policy)))
+
+    # Trim to the first 9 digits if longer, or pad with zeros if shorter
+    if len(policy_str) > 9:
+        policy_str = policy_str[:9]
+    policy_str = policy_str.zfill(9)
+
+    return policy_str
+
+
 def force_login_check():
     """Force login check before any operation"""
     if os.path.exists(AUTH_FILE) and verify_auth_file():
@@ -244,22 +265,32 @@ def process_uploaded_file(uploaded_file, file_type, selected_bank):
     
     try:
         if file_type == "Excel":
+            # Read the file directly and pass it to process_bank_data for further processing
             df = pd.read_excel(file_path)
             processed_data = process_bank_data(df, selected_bank)
             st.session_state.processed_files.append(processed_data)
             st.success(f"File '{uploaded_file.name}' processed successfully.")
             st.dataframe(processed_data)
+        
         elif file_type == "PDF":
+            # Process PDF file
             processed_data = process_pdf_bank_data(file_path, selected_bank)
             st.session_state.processed_files.append(processed_data)
             st.success(f"File '{uploaded_file.name}' processed and tabular data extracted successfully.")
             st.dataframe(processed_data)
+        
         else:
+            # Unsupported file type
             st.warning("Only Excel and PDF files are currently supported for processing.")
             return
 
     except Exception as e:
+        # Handle any errors during file processing
         st.error(f"Error processing the file: {e}")
+
+
+
+
 def combine_and_save_processed_files():
     """Combine processed files and save the output"""
     if st.session_state.processed_files:
@@ -285,90 +316,240 @@ def process_broker_file(broker_file):
     with open(broker_path, "wb") as f:
         f.write(broker_file.getbuffer())
     try:
+        # Read the broker file into a DataFrame
         broker_df = pd.read_excel(broker_path)
+
+        # Pass the raw broker DataFrame directly to broker_data_process
         processed_broker_data = broker_data_process(broker_df)
+
+        # Save the processed data to session state
         st.session_state.processed_broker_data = processed_broker_data
+
+        # Notify the user and display the processed DataFrame
         st.success("Broker file uploaded successfully.")
         st.dataframe(processed_broker_data)
 
+        # Trigger the final comparison if the button is pressed
         if st.button("Process Broker File"):
             perform_final_comparison()
+
     except Exception as e:
+        # Handle any errors during file processing
         st.error(f"Error processing the broker file: {e}")
 
-def perform_final_comparison():
-    """Perform final comparison between combined and broker data"""
-    combined_df = st.session_state.combined_df
-    processed_broker_data = st.session_state.processed_broker_data
 
-    if not combined_df.empty and not processed_broker_data.empty:
+
+def normalize_column_names(df):
+    """Normalize column names: strip whitespace and convert to uppercase"""
+    return df.rename(columns=lambda x: str(x).strip().upper())
+
+def preprocess_dataframe(df):
+    """Clean and preprocess dataframe values"""
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].astype(str).str.strip().str.upper()
+    return df
+
+def map_bank_names(bank_name):
+    """Map short bank names to full names"""
+    bank_map = {
+        "BAJAJ": "BAJAJ ALLIANZ GENERAL INSURANCE COMPANY LIMITED",
+        "CARE": "CARE HEALTH INSURANCE LIMITED",
+        "CHOLAMANDALAM": "CHOLAMANDALAM MS GENERAL INSURANCE COMPANY LIMITED",
+        "FUTURE": "FUTURE GENERALI INDIA INSURANCE COMPANY LIMITED",
+        "IFFCO": "IFFCO TOKIO GENERAL INSURANCE COMPANY LIMITED",
+        "LIBERTY": "LIBERTY GENERAL INSURANCE LIMITED",
+        "GO-DIGIT": "GO DIGIT GENERAL INSURANCE LIMITED",
+        "HDFC": "HDFC ERGO GENERAL INSURANCE COMPANY LIMITED",
+        "ICICI": "ICICI LOMBARD GENERAL INSURANCE COMPANY LIMITED",
+        "MANIPAL SIGNA": "MANIPALCIGNA HEALTH INSURANCE COMPANY LIMITED",
+        "NATIONAL NEHRU": "NATIONAL INSURANCE COMPANY LIMITED",
+        "RELIANCE": "RELIANCE GENERAL INSURANCE COMPANY LIMITED",
+        "SBI": "SBI GENERAL INSURANCE COMPANY LIMITED",
+        "TATA AIG": "TATA AIG GENERAL INSURANCE COMPANY LIMITED",
+        "UNITED PDF": "UNITED INDIA INSURANCE COMPANY LIMITED"
+    }
+    return bank_map.get(bank_name.upper(), bank_name)
+
+def standardize_endorsement_values(df):
+    """Standardize endorsement-related values"""
+    if 'INSNATURE' in df.columns:
+        df = df.rename(columns={'INSNATURE': 'INSURANCE_NATURE'})
+    if 'INSURANCE NATURE' in df.columns:
+        df = df.rename(columns={'INSURANCE NATURE': 'INSURANCE_NATURE'})
+    
+    if 'INSURANCE_NATURE' in df.columns:
+        replacements = {
+            'ENDORSMENT': 'ENDORSEMENT',
+            'Endorsment': 'ENDORSEMENT',
+            'endorsment': 'ENDORSEMENT',
+            'ENDO': 'ENDORSEMENT'
+        }
+        df['INSURANCE_NATURE'] = df['INSURANCE_NATURE'].replace(replacements)
+    return df
+
+def normalize_premium_columns(df):
+    """Normalize premium-related columns"""
+    premium_column_mappings = {
+        'APPLICABLE_PREMIUM_AMOUNT': 'PREMIUM_AMOUNT',
+        'PREMIUM_FOR_PAYOUTS': 'PREMIUM_AMOUNT',
+        'TOTAL PREMIUM': 'PREMIUM_AMOUNT',
+        'TOTALPREMIUM': 'PREMIUM_AMOUNT',
+        'ODPREMIUMPREMIUM': 'PREMIUM_AMOUNT'
+    }
+    
+    for old_col, new_col in premium_column_mappings.items():
+        if old_col in df.columns:
+            df[new_col] = pd.to_numeric(df[old_col], errors='coerce')
+            
+    return df
+
+def normalize_customer_names(df):
+    """Normalize customer name columns"""
+    customer_column_mappings = {
+        'INSURED_CUSTOMER_NAME': 'CUSTOMER_NAME',
+        'CUSTOMER NAME': 'CUSTOMER_NAME',
+        'CNAME': 'CUSTOMER_NAME',
+        'CUSTOMERNAME': 'CUSTOMER_NAME'
+    }
+    
+    for old_col, new_col in customer_column_mappings.items():
+        if old_col in df.columns:
+            df[new_col] = df[old_col].str.strip().str.upper()
+    
+    return df
+
+def perform_final_comparison():
+    try:
+        # Get combined bank and broker data from session state
+        combined_df = st.session_state.combined_df.copy()
+        broker_df = st.session_state.processed_broker_data.copy()
+
+        if combined_df.empty or broker_df.empty:
+            st.error("One or both datasets are empty. Cannot proceed with comparison.")
+            return
+
         # Normalize column names for consistency
         combined_df.columns = combined_df.columns.str.strip().str.upper()
-        processed_broker_data.columns = processed_broker_data.columns.str.strip().str.upper()
+        broker_df.columns = broker_df.columns.str.strip().str.upper()
 
-        # Ensure required columns exist for merging
-        required_columns = ['PARSED_POLICY_REFERENCE', 'TOTAL COMMISSION BROKER']
-        if all(col in processed_broker_data.columns for col in required_columns) and 'TOTAL COMMISSION' in combined_df.columns:
-            # Merge the dataframes
-            merged_df = combined_df.merge(
-                processed_broker_data,
-                how='outer',  # Include unmatched broker records
-                on='PARSED_POLICY_REFERENCE',
-                suffixes=('', '_BROKER'),
-                indicator=True  # Adds a column to indicate source of each row
-            )
+        # Debug: Check column names
+        st.write("Combined DataFrame columns:", combined_df.columns.tolist())
+        st.write("Broker DataFrame columns:", broker_df.columns.tolist())
 
-            # Add 'FOUND' column to indicate match status
-            merged_df['FOUND'] = merged_df['_merge'].map({
-                'both': 'Matched',
-                'left_only': 'Not Found in broker sheet',
-                'right_only': 'Not Found in bank sheet'
-            })
+        # Ensure PARSED_POLICY_NUMBER_BANK exists
+        if 'PARSED_POLICY_NUMBER_BANK' not in combined_df.columns:
+            st.error("PARSED_POLICY_NUMBER_BANK column is missing in Combined DataFrame.")
+            return
 
-            # Calculate the 'DIFFERENCE' column
-            merged_df['DIFFERENCE'] = merged_df.apply(
-                lambda row: (
-                    'Positive' if pd.notna(row['TOTAL COMMISSION BROKER']) and pd.notna(row['TOTAL COMMISSION']) and row['TOTAL COMMISSION'] > row['TOTAL COMMISSION BROKER']
-                    else 'Negative' if pd.notna(row['TOTAL COMMISSION BROKER']) and pd.notna(row['TOTAL COMMISSION']) and row['TOTAL COMMISSION'] < row['TOTAL COMMISSION BROKER']
-                    else 'No Difference' if pd.notna(row['TOTAL COMMISSION BROKER'])
-                    else 'N/A'
-                ),
-                axis=1
-            )
+        # Map the SOURCE column in the bank data to broker bank names
+        combined_df['SOURCE_MAPPED'] = combined_df['SOURCE'].apply(map_bank_names)
 
-            # Calculate the 'DIFFERENCE_AMOUNT' column
-            merged_df['DIFFERENCE_AMOUNT'] = merged_df.apply(
-                lambda row: (
-                    row['TOTAL COMMISSION'] - row['TOTAL COMMISSION BROKER'] if pd.notna(row['TOTAL COMMISSION']) and pd.notna(row['TOTAL COMMISSION BROKER'])
-                    else row['TOTAL COMMISSION'] if row['FOUND'] == 'Not Found in broker sheet'
-                    else -row['TOTAL COMMISSION BROKER'] if row['FOUND'] == 'Not Found in bank sheet'
-                    else 0
-                ),
-                axis=1
-            )
+        # Filter broker data to include only banks listed in the mapped source column of combined_df
+        relevant_banks = combined_df['SOURCE_MAPPED'].unique()
+        st.write("Relevant Banks after Mapping:", relevant_banks)
+        filtered_broker_df = broker_df[broker_df['BANK NAME'].isin(relevant_banks)]
 
-            # Handle entries found only in the broker file
-            broker_only_df = merged_df[merged_df['_merge'] == 'right_only'].copy()
-            broker_only_df['SOURCE'] = broker_only_df['BANK NAME']  # Retain the bank name from the broker file
-            broker_only_df = broker_only_df.drop(columns=['_merge'])  # Drop the merge indicator
+        # Split broker data into endorsement and regular policies
+        endorsement_broker = filtered_broker_df[filtered_broker_df['INSURANCE NATURE'] == 'Endorsment']
+        regular_broker = filtered_broker_df[filtered_broker_df['INSURANCE NATURE'] != 'Endorsment']
 
-            # Handle entries found in both or only in the bank file
-            merged_df = merged_df.drop(columns=['_merge'])  # Drop the merge indicator from the main DataFrame
+        # Match regular policies on policy number (PARSED_POLICY_NUMBER)
+        merged_regular = pd.merge(
+            regular_broker,
+            combined_df,
+            left_on='PARSED_POLICY_REFERENCE',
+            right_on='PARSED_POLICY_NUMBER_BANK',
+            how='left',
+            suffixes=('_BROKER', '_BANK'),
+            indicator=True
+        )
 
-            # Save the results
-            output_path = './comparison_results.xlsx'
-            with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-                merged_df.to_excel(writer, sheet_name='Final Comparison', index=False)
-                broker_only_df.to_excel(writer, sheet_name='Not Found in Bank', index=False)
+        # Match endorsement policies on customer name and premium
+        merged_endorsement = pd.merge(
+            endorsement_broker,
+            combined_df,
+            left_on=['CUSTOMER NAME', 'TOTAL PREMIUM'],
+            right_on=['CUSTOMER NAME', 'PREMIUM BANK'],
+            how='left',
+            suffixes=('_BROKER', '_BANK'),
+            indicator=True
+        )
 
-            # Display success message
-            st.success(f"Comparison completed! Results saved to {output_path}")
-            st.dataframe(merged_df)
-        else:
-            missing_cols = set(required_columns + ['TOTAL COMMISSION']) - set(combined_df.columns) - set(processed_broker_data.columns)
-            st.error(f"Required columns are missing for merging and processing. Missing columns: {missing_cols}")
+        # Combine the results
+        merged_df = pd.concat([merged_regular, merged_endorsement], ignore_index=True)
+
+        # Add FOUND column based on the _merge column
+        merged_df['FOUND'] = merged_df['_merge'].map({
+            'both': 'Matched',
+            'left_only': 'Not Found in Bank',
+            'right_only': 'Not Found in Broker'
+        })
+
+        # Calculate the DIFF column (difference in commissions)
+        merged_df['DIFFERENCE'] = merged_df.apply(
+            lambda row: (
+                row['TOTAL COMMISSION BROKER'] - row['TOTAL COMMISSION']
+                if pd.notna(row['TOTAL COMMISSION BROKER']) and pd.notna(row['TOTAL COMMISSION'])
+                else 0
+            ),
+            axis=1
+        )
+
+        # Drop unnecessary columns
+        merged_df.drop(columns=['_merge', 'SOURCE_MAPPED'], inplace=True)
+
+        # Save the final merged data to an Excel file
+        output_path = './comparison_results.xlsx'
+        merged_df.to_excel(output_path, index=False)
+
+        # Display the results in Streamlit
+        st.success(f"Comparison completed successfully! Results saved to {output_path}")
+        st.dataframe(merged_df)
+
+        # Display summary statistics
+        display_results_summary(merged_df)
+
+    except Exception as e:
+        st.error(f"An error occurred during comparison: {str(e)}")
+
+
+
+
+
+
+
+def calculate_commission_difference(row):
+    """Calculate commission difference between bank and broker records"""
+    if row['FOUND'] == 'Matched':
+        bank_commission = row.get('TOTAL COMMISSION', 0) or 0
+        broker_commission = row.get('TOTAL COMMISSION BROKER', 0) or 0
+        return float(bank_commission) - float(broker_commission)
+    elif row['FOUND'] == 'Not Found in Broker':
+        return float(row.get('TOTAL COMMISSION', 0) or 0)
     else:
-        st.warning("Combined or broker data is empty. Cannot proceed with comparison.")
+        return -float(row.get('TOTAL COMMISSION BROKER', 0) or 0)
+
+def display_results_summary(merged_df):
+    """Display summary statistics of the comparison results."""
+    total_records = len(merged_df)
+    matched = len(merged_df[merged_df['FOUND'] == 'Matched'])
+    not_in_bank = len(merged_df[merged_df['FOUND'] == 'Not Found in Bank'])
+    not_in_broker = len(merged_df[merged_df['FOUND'] == 'Not Found in Broker'])
+
+    st.write("Comparison Summary:")
+    st.write(f"Total Records: {total_records}")
+    st.write(f"Matched Records: {matched}")
+    st.write(f"Records Not Found in Bank: {not_in_bank}")
+    st.write(f"Records Not Found in Broker: {not_in_broker}")
+
+
+
+
+
+
+
+
 
 
 if __name__ == "__main__":
