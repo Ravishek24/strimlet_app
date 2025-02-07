@@ -3,200 +3,91 @@ import streamlit as st
 
 def process_bank_data(df, bank_name):
     """Process data based on the selected bank's specific logic."""
-    # Define a common naming scheme for columns
+    # Define standard column names
     standard_columns = {
         "reference": "Policy Reference",
         "customer_name": "Customer Name",
-        "commission": "Total Commission"
+        "commission": "Total Commission",
+        "premium": "Premium Bank"  # New column for Premium Amount
     }
 
-    if bank_name == "Bajaj":
-        if 'POLICY_REFERENCE' in df.columns:
-            filtered_df = df[df['POLICY_REFERENCE'].notna()]
-            selected_columns = filtered_df[['POLICY_REFERENCE', 'CUSTOMER NAME ', 'TOTAL COMMISSION']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'Bajaj'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
+    # Bank-specific configurations
+    bank_config = {
+        "Bajaj": {"columns": ['POLICY_REFERENCE', 'CUSTOMER NAME ', 'TOTAL COMMISSION', 'NET PREMIUM'], "source": "Bajaj"},
+        "CARE": {"columns": ['Policy No', 'Customer Name', 'Total Amount', 'Premium'], "source": "CARE"},
+        "Cholamandalam": {"columns": ['POLICY_NO', 'INSURED_NAME', 'Total Payout', 'NET_PREMIUM'], "source": "Cholamandalam"},
+        "FUTURE": {"columns": ['POLICY_NO', 'COMBINE_CLIENT_NAME', 'Com+Payout', 'GWP'], "source": "FUTURE"},
+        "LIBERTY": {"columns": ['POLICY/ENDORSEMENT NO.', 'INSURED NAME', 'TOTAL COMMISSION', 'GWP'], "source": "LIBERTY"},
+        "GO-DIGIT": {"columns": ['policy number', 'policy holder', 'IRDA_AMT', 'net premium'], "source": "GO-DIGIT"},
+        "HDFC": {"columns": ['Certificate_Num', 'Customer_Name', 'TOTAL_COMM', 'GWP'], "source": "HDFC"},
+        "ICICI": {"columns": ['POL_NUM_TXT', 'INSURED_CUSTOMER_NAME', 'ACTUAL_COMMISSION', 'PREMIUM_FOR_PAYOUTS'], "source": "ICICI"},
+        "MANIPAL SIGNA": {"columns": ['Policy Number', 'Proposer Name', 'Commission', 'Base Premium'], "source": "MANIPAL SIGNA"},
+        "NATIONAL NEHRU": {"columns": ['Policy No', 'Insured Name', 'Commission Amount', 'Premium Amount'], "source": "NATIONAL NEHRU"},
+        "RELIANCE": {"columns": ['PolicyNumber', 'InsuredName', 'FinalIRDAComm', 'PremiumAmount'], "source": "RELIANCE"},
+        "SBI": {"columns": ['Policy No', 'Insured Name', 'Total Commission', 'Gross Written Premium'], "source": "SBI"},
+        "TATA AIG": {"columns": ['policy_no', 'clientname', 'Commission ', 'premiumamount'], "source": "TATA AIG"},
+        "The New India Pdf": {"columns": ['Policy Number', 'Brokerage'], "source": "The New India Pdf"},
+        "United Pdf": {"columns": ['Policy/ Endt number', 'Insured Name', 'Commission Amount'], "source": "United Pdf"}
+    }
 
-    elif bank_name == "CARE":
-        if 'Policy No' in df.columns:
-            filtered_df = df[df['Policy No'].notna()]
-            selected_columns = filtered_df[['Policy No', 'Customer Name', 'Total Amount']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'CARE'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
+    # Validate if bank is supported
+    if bank_name not in bank_config:
+        st.warning(f"Bank '{bank_name}' is not supported.")
+        return pd.DataFrame()
 
-    elif bank_name == "Cholamandalam":
-        if 'POLICY_NO' in df.columns:
-            filtered_df = df[df['POLICY_NO'].notna()]
-            selected_columns = filtered_df[['POLICY_NO', 'INSURED_NAME', 'Total Payout']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'Cholamandalam'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
+    # Get the configuration for the selected bank
+    config = bank_config[bank_name]
 
-    elif bank_name == "FUTURE":
-        if 'POLICY_NO' in df.columns:
-            filtered_df = df[df['POLICY_NO'].notna()]
-            selected_columns = filtered_df[['POLICY_NO', 'COMBINE_CLIENT_NAME', 'Com+Payout']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'FUTURE'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
+    # Validate required columns
+    try:
+        validate_columns(df, config['columns'])
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
 
-    elif bank_name == "IFFCO":
-        if 'Policy number' in df.columns:
-            filtered_df = df[df['Policy number'].notna()]
-            selected_columns = filtered_df[['Policy number', 'Client Name', 'Total Eligible']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'IFFCO'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
+    # Process the data
+    return process_specific_bank(df, config, standard_columns)
 
-    elif bank_name == "LIBERTY":
-        if 'POLICY/ENDORSEMENT NO.' in df.columns:
-            filtered_df = df[df['POLICY/ENDORSEMENT NO.'].notna()]
-            selected_columns = filtered_df[['POLICY/ENDORSEMENT NO.', 'INSURED NAME', 'TOTAL COMMISSION']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'LIBERTY'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
+def validate_columns(df, required_columns):
+    """Validate that required columns exist in the DataFrame."""
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {missing_columns}")
 
-    elif bank_name == "GO-DIGIT":
-        if 'policy number' in df.columns:
-            filtered_df = df[df['policy number'].notna()]
-            selected_columns = filtered_df[['policy number', 'policy holder', 'IRDA_AMT']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'GO-DIGIT'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
+def process_specific_bank(df, config, standard_columns):
+    """Process data for a specific bank."""
+    filtered_df = df[df[config['columns'][0]].notna()]
+    validate_columns(filtered_df, config['columns'])  # Validate columns dynamically
+    selected_columns = filtered_df[config['columns']].copy()
 
-    elif bank_name == "HDFC":
-        if 'Certificate_Num' in df.columns:
-            filtered_df = df[df['Certificate_Num'].notna()]
-            selected_columns = filtered_df[['Certificate_Num', 'Customer_Name', 'TOTAL_COMM']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'HDFC'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
-
-    elif bank_name == "ICICI":
-        if 'POL_NUM_TXT' in df.columns:
-            filtered_df = df[df['POL_NUM_TXT'].notna()]
-            
-            selected_columns = filtered_df[['POL_NUM_TXT', 'INSURED_CUSTOMER_NAME', 'ACTUAL_COMMISSION']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'ICICI'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
-
-    elif bank_name == "MANIPAL SIGNA":
-        if 'Policy Number' in df.columns:
-            filtered_df = df[df['Policy Number'].notna()]
-            selected_columns = filtered_df[['Policy Number', 'Proposer Name', 'Commission']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'MANIPAL SIGNA'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
-
-    elif bank_name == "NATIONAL NEHRU":
-        if 'Policy No' in df.columns:
-            filtered_df = df[df['Policy No'].notna()]
-            selected_columns = filtered_df[['Policy No', 'Insured Name', 'Commission Amount']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'NATIONAL NEHRU'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
-
-    elif bank_name == "RELIANCE":
-        if 'PolicyNumber' in df.columns:
-            filtered_df = df[df['PolicyNumber'].notna()]
-            selected_columns = filtered_df[['PolicyNumber', 'InsuredName', 'FinalIRDAComm']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'RELIANCE'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
-        
-    elif bank_name == "SBI":
-        if 'Policy No' in df.columns:
-            filtered_df = df[df['Policy No'].notna()]
-            selected_columns = filtered_df[['Policy No', 'Insured Name', 'Total Commission']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'SBI'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
-        
-    elif bank_name == "TATA AIG":
-        if 'policy_no' in df.columns:
-            filtered_df = df[df['policy_no'].notna()]
-            selected_columns = filtered_df[['policy_no', 'clientname', 'Commission ']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'TATA AIG'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
-
-    elif bank_name == "The New India Pdf":
-        if 'policy number' in df.columns:
-            filtered_df = df[df['policy number'].notna()]
-            possible_insured_columns = ['insured name', 'insuredname']
-            insured_column = next((col for col in df.columns if col in possible_insured_columns), None)
-            if insured_column:
-                selected_columns = filtered_df[['policy number', insured_column, 'brokerage']].copy()
-                selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-                selected_columns.loc[:, 'Source'] = 'The New India Pdf'
-                selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-                return selected_columns
-            else:
-                st.warning("No valid 'Insured Name' column found.")
-                return pd.DataFrame()
-        else:
-            return pd.DataFrame()
-
-    elif bank_name == "United Pdf":
-        if 'Policy/ Endt number' in df.columns:
-            filtered_df = df[df['Policy/ Endt number'].notna()]
-            selected_columns = filtered_df[['Policy/ Endt number', 'Insured Name', 'Commission Amount']].copy()
-            selected_columns.columns = [standard_columns["reference"], standard_columns["customer_name"], standard_columns["commission"]]
-            selected_columns.loc[:, 'Source'] = 'United Pdf'
-            selected_columns.loc[:, 'Parsed_POLICY_REFERENCE'] = selected_columns[standard_columns["reference"]].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return selected_columns
-        else:
-            return pd.DataFrame()
-
+    # Rename columns based on the configuration
+    if len(config['columns']) == 4:
+        selected_columns.columns = [
+            standard_columns["reference"],
+            standard_columns["customer_name"],
+            standard_columns["commission"],
+            standard_columns["premium"]
+        ]
     else:
-        if 'POLICY_REFERENCE' in df.columns:
-            filtered_df = df[df['POLICY_REFERENCE'].notna()]
-            filtered_df['Cleaned_POLICY_REFERENCE'] = filtered_df['POLICY_REFERENCE'].str.replace(r'[^a-zA-Z0-9]', '', regex=True)
-            return filtered_df
-        else:
-            return pd.DataFrame()
+        selected_columns.columns = [
+            standard_columns["reference"],
+            standard_columns["customer_name"],
+            standard_columns["commission"]
+        ]
+
+    # Convert all premium amounts to positive
+    if "Premium Bank" in selected_columns.columns:
+        selected_columns["Premium Bank"] = selected_columns["Premium Bank"].abs()
+
+    # Add metadata and clean policy references
+    selected_columns.loc[:, 'Source'] = config['source']
+    selected_columns.loc[:, 'Parsed_POLICY_NUMBER_BANK'] = (
+        selected_columns[standard_columns["reference"]]
+        .astype(str)
+        .str.replace(r'[^a-zA-Z0-9]', '', regex=True)
+    )
+
+    # Keep only the first occurrence of each Parsed_POLICY_NUMBER_BANK
+    selected_columns = selected_columns.drop_duplicates(subset=['Parsed_POLICY_NUMBER_BANK'], keep='first')
+
+    return selected_columns
